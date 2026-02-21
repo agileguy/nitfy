@@ -73,19 +73,19 @@ describe("validateProfile", () => {
     expect(errors.some((e) => e.includes("url"))).toBe(true);
   });
 
-  it("catches missing user", () => {
+  it("allows missing user (anonymous access)", () => {
     const errors = validateProfile(makeProfile({ user: undefined }));
-    expect(errors.some((e) => e.includes("user"))).toBe(true);
+    expect(errors.some((e) => e.includes("user"))).toBe(false);
   });
 
-  it("catches empty user", () => {
+  it("allows empty user (anonymous access)", () => {
     const errors = validateProfile(makeProfile({ user: "" }));
-    expect(errors.some((e) => e.includes("user"))).toBe(true);
+    expect(errors.some((e) => e.includes("user"))).toBe(false);
   });
 
-  it("catches missing password", () => {
+  it("allows missing password (anonymous access)", () => {
     const errors = validateProfile(makeProfile({ password: undefined }));
-    expect(errors.some((e) => e.includes("password"))).toBe(true);
+    expect(errors.some((e) => e.includes("password"))).toBe(false);
   });
 
   it("catches missing defaultTopic", () => {
@@ -99,8 +99,11 @@ describe("validateProfile", () => {
   });
 
   it("can return multiple errors at once", () => {
+    // Only url and defaultTopic are required; user/password are optional for anonymous access
     const errors = validateProfile({});
-    expect(errors.length).toBeGreaterThanOrEqual(3);
+    expect(errors.length).toBeGreaterThanOrEqual(2);
+    expect(errors.some((e) => e.includes("url"))).toBe(true);
+    expect(errors.some((e) => e.includes("defaultTopic"))).toBe(true);
   });
 });
 

@@ -21,10 +21,19 @@ const GRAY = "\x1b[90m";
 const WHITE = "\x1b[37m";
 
 /**
- * Set to true to strip all ANSI codes from output (e.g. when piping to a file).
- * The entry point (ntfy.ts) should set this based on --no-color / NO_COLOR env.
+ * Whether to strip all ANSI codes from output.
+ * Auto-detected at module load from NO_COLOR env var and TTY status.
+ * Use setNoColor() to override programmatically (e.g. from --no-color flag).
  */
-export let noColor = false;
+let noColor: boolean =
+  process.env["NO_COLOR"] !== undefined || !process.stdout.isTTY;
+
+/**
+ * Override the noColor setting programmatically.
+ */
+export function setNoColor(v: boolean): void {
+  noColor = v;
+}
 
 function c(code: string, text: string): string {
   if (noColor) return text;

@@ -3,7 +3,7 @@
  * Stores profiles at ~/.config/ntfy-cli/config.json
  */
 
-import { mkdirSync, readFileSync, writeFileSync, chmodSync, existsSync } from "fs";
+import { mkdirSync, readFileSync, writeFileSync, chmodSync, existsSync, renameSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 
@@ -36,7 +36,8 @@ export function ensureConfigDir(): string {
 
 /**
  * Reads config.json from the config directory.
- * Returns null if the file does not exist.
+ * Returns null if the file does not exist or cannot be parsed.
+ * Prints a warning to stderr for JSON parse errors (vs silent for missing file).
  */
 export function loadConfig(): Config | null {
   const dir = ensureConfigDir();
@@ -44,22 +45,31 @@ export function loadConfig(): Config | null {
   if (!existsSync(path)) {
     return null;
   }
+  let raw: string;
   try {
-    const raw = readFileSync(path, "utf8");
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+  try {
     return JSON.parse(raw) as Config;
   } catch {
+    console.error(`Warning: config.json is corrupted and could not be parsed. Path: ${path}`);
     return null;
   }
 }
 
 /**
- * Writes the config to disk with 2-space indentation and mode 0600.
+ * Writes the config to disk atomically with 2-space indentation and mode 0600.
+ * Writes to a temp file first, then renames into place to avoid corruption.
  */
 export function saveConfig(config: Config): void {
   const dir = ensureConfigDir();
   const path = join(dir, "config.json");
-  writeFileSync(path, JSON.stringify(config, null, 2) + "\n", "utf8");
-  chmodSync(path, 0o600);
+  const tmpPath = `${path}.tmp`;
+  writeFileSync(tmpPath, JSON.stringify(config, null, 2) + "\n", "utf8");
+  chmodSync(tmpPath, 0o600);
+  renameSync(tmpPath, path);
 }
 
 /**
@@ -80,6 +90,7 @@ export function getActiveProfile(config: Config): ServerProfile {
 /**
  * Validates a partial profile and returns an array of error strings.
  * Returns an empty array if the profile is valid.
+ * Note: user and password are optional (anonymous access is supported).
  */
 export function validateProfile(profile: Partial<ServerProfile>): string[] {
   const errors: string[] = [];
@@ -92,14 +103,6 @@ export function validateProfile(profile: Partial<ServerProfile>): string[] {
     } catch {
       errors.push(`url "${profile.url}" is not a valid URL`);
     }
-  }
-
-  if (!profile.user || profile.user.trim() === "") {
-    errors.push("user is required");
-  }
-
-  if (!profile.password || profile.password.trim() === "") {
-    errors.push("password is required");
   }
 
   if (!profile.defaultTopic || profile.defaultTopic.trim() === "") {

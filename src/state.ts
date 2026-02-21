@@ -4,12 +4,13 @@
  * State file lives at ~/.config/ntfy-cli/state.json
  */
 
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, chmodSync, existsSync } from "fs";
 import { join } from "path";
 import { ensureConfigDir } from "./config.js";
 
 export interface TopicState {
   lastReadTime: number;
+  lastReadId?: string;
 }
 
 export interface State {
@@ -23,26 +24,34 @@ function statePath(): string {
 /**
  * Reads state from disk. Returns an empty state object if the file does
  * not exist or cannot be parsed.
+ * Prints a warning to stderr for JSON parse errors (vs silent for missing file).
  */
 export function loadState(): State {
   const path = statePath();
   if (!existsSync(path)) {
     return { topics: {} };
   }
+  let raw: string;
   try {
-    const raw = readFileSync(path, "utf8");
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return { topics: {} };
+  }
+  try {
     return JSON.parse(raw) as State;
   } catch {
+    console.error(`Warning: state.json is corrupted and could not be parsed. Path: ${path}`);
     return { topics: {} };
   }
 }
 
 /**
- * Writes state to disk.
+ * Writes state to disk with mode 0600.
  */
 export function saveState(state: State): void {
   const path = statePath();
   writeFileSync(path, JSON.stringify(state, null, 2) + "\n", "utf8");
+  chmodSync(path, 0o600);
 }
 
 /**

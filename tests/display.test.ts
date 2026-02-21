@@ -1,8 +1,22 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { formatTime, formatTimeShort, priorityBadge, formatTags } from "../src/display";
+import { formatTime, formatTimeShort, priorityBadge, formatTags, setNoColor } from "../src/display";
 
-// Disable color output for deterministic string comparisons
+// Import module namespace for potential future use
 import * as displayModule from "../src/display";
+
+// ---------------------------------------------------------------------------
+// Ensure ANSI color is enabled for tests that check for escape codes.
+// The module auto-detects noColor=true when stdout is not a TTY (e.g. in CI),
+// so we force it back to false for the test suite and restore after.
+// ---------------------------------------------------------------------------
+beforeEach(() => {
+  setNoColor(false);
+});
+
+afterEach(() => {
+  // Reset to a neutral state; individual tests control noColor as needed
+  setNoColor(false);
+});
 
 // ---------------------------------------------------------------------------
 // Helper: strip ANSI escape codes for clean assertions

@@ -9,13 +9,12 @@ import { homedir } from "os";
 import { getFlag, hasFlag, getPositionals } from "./src/args.js";
 import { fetchMessages, sendMessage, checkHealth } from "./src/api.js";
 import type { NtfyMessage } from "./src/api.js";
-import { noColor as _noColor, formatTime, displayMessages, displayUnreadSummary } from "./src/display.js";
+import { setNoColor, displayMessages, displayUnreadSummary } from "./src/display.js";
 import {
   loadConfig,
   saveConfig,
   resolveProfile,
   validateProfile,
-  getActiveProfile,
 } from "./src/config.js";
 import type { ServerProfile, Config } from "./src/config.js";
 import {
@@ -107,7 +106,7 @@ Global Flags:
 // ---------------------------------------------------------------------------
 async function cmdMessages(profile: ServerProfile, args: string[]): Promise<void> {
   const topic = getFlag(args, "--topic", "-t") ?? profile.defaultTopic;
-  const since = getFlag(args, "--since", "-s") ?? "1h";
+  const since = getFlag(args, "--since", "-s") ?? "12h";
   const json = hasFlag(args, "--json");
 
   const messages = await fetchMessages(profile.url, profile.user, profile.password, topic, since);
@@ -172,8 +171,12 @@ async function cmdUnread(
   }
 
   if (countOnly) {
-    for (const r of results) {
-      console.log(`${r.topic}: ${r.messages.length}`);
+    if (topicArg) {
+      // Single topic: output just the integer count
+      console.log(String(results[0]?.messages.length ?? 0));
+    } else {
+      // No topic: sum all topics and output a plain integer (same as --total)
+      console.log(String(totalCount));
     }
     return;
   }
@@ -206,6 +209,10 @@ async function cmdSend(profile: ServerProfile, args: string[]): Promise<void> {
   const tags = getFlag(args, "--tags");
 
   const priority = priorityStr !== undefined ? parseInt(priorityStr, 10) : undefined;
+  if (priority !== undefined && (isNaN(priority) || priority < 1 || priority > 5)) {
+    console.error(`Error: --priority must be 1-5, got: "${priorityStr}"`);
+    process.exit(1);
+  }
 
   const result = await sendMessage(profile.url, profile.user, profile.password, topic, message, {
     title,
@@ -286,8 +293,8 @@ function cmdConfigAdd(args: string[]): void {
 
   const profile: ServerProfile = {
     url: url!,
-    user: user!,
-    password: password!,
+    user: user ?? "",
+    password: password ?? "",
     defaultTopic: topic!,
     topics: [topic!],
     topicGroups: {},
@@ -340,6 +347,18 @@ function cmdConfigRemove(args: string[]): void {
   }
 
   saveConfig(config);
+
+  // Clean up all state keys for this profile
+  const state = loadState();
+  const prefix = `${name}/`;
+  const cleanedTopics: typeof state.topics = {};
+  for (const [key, value] of Object.entries(state.topics)) {
+    if (!key.startsWith(prefix)) {
+      cleanedTopics[key] = value;
+    }
+  }
+  saveState({ ...state, topics: cleanedTopics });
+
   console.log(`Profile "${name}" removed.`);
 }
 
@@ -410,25 +429,30 @@ async function main(): Promise<void> {
   }
 
   const serverOverride = getFlag(rawArgs, "--server");
-  const useJson = hasFlag(rawArgs, "--json");
   const noColorFlag = hasFlag(rawArgs, "--no-color");
-  const quiet = hasFlag(rawArgs, "--quiet");
 
-  // Apply no-color globally via the display module's exported variable
+  // Apply no-color globally via the display module setter
   if (noColorFlag) {
-    // The display module exports `noColor` - set it via dynamic import trick
-    // Since ES modules are live bindings we need to set it through the module
-    (await import("./src/display.js")).noColor = true;
+    setNoColor(true);
   }
 
-  // Suppress unused variable warnings
-  void useJson;
-  void quiet;
-
-  // Identify command (first non-flag token)
-  const command = rawArgs.find((a) => !a.startsWith("-"));
-  // Args after command name for command-specific parsing
-  const commandArgs = command ? rawArgs.slice(rawArgs.indexOf(command) + 1) : [];
+  // Identify command (first non-flag token), skipping global flags that consume a value.
+  // This prevents flag values (e.g. `ntfy --server myserver messages`) from being
+  // mistakenly identified as the command name.
+  const GLOBAL_FLAGS_WITH_VALUES = ["--server"];
+  let commandIdx = -1;
+  for (let i = 0; i < rawArgs.length; i++) {
+    const arg = rawArgs[i];
+    if (GLOBAL_FLAGS_WITH_VALUES.includes(arg!)) {
+      i++; // skip the value argument
+      continue;
+    }
+    if (arg!.startsWith("-")) continue;
+    commandIdx = i;
+    break;
+  }
+  const command = commandIdx >= 0 ? rawArgs[commandIdx] : undefined;
+  const commandArgs = commandIdx >= 0 ? rawArgs.slice(commandIdx + 1) : [];
 
   // Config commands don't always need a profile
   if (command === "config") {
