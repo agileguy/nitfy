@@ -1,11 +1,48 @@
 {
   "name": "nitfy",
   "version": "1.0.0",
+  "description": "ntfy CLI client — messages, send, unread, read, watch, health, topics, completions. Zero dependencies, runs with bun.",
   "type": "module",
+  "main": "dist/ntfy.js",
+  "bin": {
+    "nitfy": "./dist/ntfy.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "dev": "bun run ntfy.ts",
     "test": "bun test",
-    "build": "bun build --compile ntfy.ts --outfile ntfy"
+    "build": "bun build ntfy.ts --outdir dist --target node --format esm",
+    "build:binary": "bun build --compile ntfy.ts --outfile ntfy",
+    "type-check": "bunx tsc --noEmit",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "bun run clean && bun run build"
+  },
+  "engines": {
+    "bun": ">=1.0.0",
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "ntfy",
+    "notifications",
+    "push",
+    "cli",
+    "devops",
+    "sre"
+  ],
+  "author": "agileguy",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/agileguy/nitfy.git"
+  },
+  "homepage": "https://github.com/agileguy/nitfy#readme",
+  "bugs": {
+    "url": "https://github.com/agileguy/nitfy/issues"
   },
   "devDependencies": {
     "bun-types": "^1.3.9"

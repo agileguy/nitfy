@@ -1,4 +1,7 @@
 node_modules/
+dist/
 ntfy
 *.log
 .DS_Store
+bun.lockb
+bun.lock

@@ -1,0 +1,13 @@
+ntfy.ts
+src/
+tests/
+sounds/
+docs/
+*.log
+.DS_Store
+node_modules/
+bun.lock
+bun.lockb
+tsconfig.json
+.github/
+ntfy
