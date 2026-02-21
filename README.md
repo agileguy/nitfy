@@ -37,7 +37,7 @@ The `ntfy` binary is excluded from version control via `.gitignore`.
 
 ### Option A: Environment variables (simplest)
 
-Set these in your shell profile or `~/.claude/.env`:
+Set these in your shell profile (`~/.bashrc`, `~/.zshrc`, or `~/.profile`):
 
 ```bash
 export NTFY_URL=https://ntfy.sh
@@ -394,7 +394,7 @@ When resolving which profile to use, nitfy follows this order:
 | `NTFY_CONFIG_DIR` | Override config directory (useful for testing) |
 | `NO_COLOR` | Disable ANSI colors when set |
 
-nitfy also reads `NTFY_*` variables from `~/.claude/.env` if that file exists, for integration with the PAI environment.
+nitfy also reads `NTFY_*` variables from a `.env` file if present in the working directory.
 
 ## Exit Codes
 

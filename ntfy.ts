@@ -330,7 +330,7 @@ async function cmdSend(profile: ServerProfile, args: string[]): Promise<void> {
 
   if (positionals.length === 0) {
     console.error("Error: message text is required. Usage: ntfy send <message>");
-    process.exit(1);
+    process.exit(2);
   }
 
   const message = positionals.join(" ");
@@ -349,6 +349,8 @@ async function cmdSend(profile: ServerProfile, args: string[]): Promise<void> {
     process.exit(2);
   }
 
+  const json = hasFlag(args, "--json");
+
   const result = await sendMessage(profile.url, profile.user, profile.password, topic, message, {
     title,
     priority,
@@ -359,7 +361,9 @@ async function cmdSend(profile: ServerProfile, args: string[]): Promise<void> {
     markdown,
   });
 
-  if (!quietMode) {
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+  } else if (!quietMode) {
     // Truncate message ID to 8 chars in display; full ID is available in --json output
     const displayId = result.id.slice(0, 8);
     console.log(`Sent: ${displayId} to ${topic}`);
