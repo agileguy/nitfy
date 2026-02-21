@@ -299,7 +299,7 @@ describe("watchLoop integration", () => {
       exited: Promise.resolve(0),
     } as unknown as ReturnType<typeof Bun.spawn>);
 
-    const onSpy = spyOn(process, "on").mockReturnValue(process);
+    const onceSpy = spyOn(process, "once").mockReturnValue(process);
 
     const controller = new AbortController();
     const profile = makeProfile();
@@ -318,23 +318,17 @@ describe("watchLoop integration", () => {
     const allOutput = outputLines.join("");
     expect(allOutput).toContain("Hello from watch");
 
-    // Abort the loop
+    // Abort the loop - the abort-aware sleep will resolve immediately,
+    // allowing the loop to exit on the next signal check.
     controller.abort();
 
-    // The loop should now exit since signal.aborted is true
-    // We need to trigger the sleep to resolve so the abort check runs.
-    // Since interval is 3600s, we'd be waiting forever. Instead, abort
-    // causes the next iteration check to bail. The current sleep is
-    // waiting 3600s. To unblock this, we just let the loop end on next check.
-    // Actually the loop checks signal before sleeping - it already exited the
-    // topic loop and is now in the await sleep(). We need to let it time out
-    // OR the loop exits after the sleep. Since we can't interrupt the sleep...
-    // Let's just not await the loopPromise in this test - it'll be cleaned up.
+    // Now the sleep is abort-aware, so we can await the loop to completion.
+    await loopPromise;
 
     fetchSpy.mockRestore();
     stdoutSpy.mockRestore();
     spawnSpy.mockRestore();
-    onSpy.mockRestore();
+    onceSpy.mockRestore();
   });
 
   it("does not call Bun.spawn when noSound is true", async () => {
@@ -356,12 +350,12 @@ describe("watchLoop integration", () => {
     } as unknown as ReturnType<typeof Bun.spawn>);
 
     const stdoutSpy = spyOn(process.stdout, "write").mockImplementation(() => true);
-    const onSpy = spyOn(process, "on").mockReturnValue(process);
+    const onceSpy = spyOn(process, "once").mockReturnValue(process);
 
     const controller = new AbortController();
     const profile = makeProfile();
 
-    watchLoop(profile, ["alerts"], {
+    const loopPromise = watchLoop(profile, ["alerts"], {
       intervalSeconds: 3600,
       noSound: true,
       signal: controller.signal,
@@ -373,10 +367,11 @@ describe("watchLoop integration", () => {
     expect(spawnSpy.mock.calls.length).toBe(0);
 
     controller.abort();
+    await loopPromise;
 
     fetchSpy.mockRestore();
     spawnSpy.mockRestore();
     stdoutSpy.mockRestore();
-    onSpy.mockRestore();
+    onceSpy.mockRestore();
   });
 });

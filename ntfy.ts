@@ -131,8 +131,8 @@ Commands:
   delete <message-id> [--topic/-t <topic>]
       Attempt to delete a message by sending DELETE to its message URL.
 
-  watch [--topic/-t <topic>] [--group <group>] [--interval <seconds>] [--no-sound] [--device <device>] [--priority <level>]
-      Watch topic(s) for new messages in real time, polling every N seconds (default 10).
+  watch [--topic/-t <topic>] [--group <group>] [--interval <seconds>] [--no-sound] [--sound <path>] [--device <device>] [--priority <level>]
+      Watch topic(s) for new messages in real time, polling every N seconds (default 60).
       Plays an audio ping on new messages. Ctrl+C prints a session summary.
 
   health [--json] [--all]
@@ -444,6 +444,12 @@ async function cmdHealth(
   const json = hasFlag(args, "--json");
   const allFlag = hasFlag(args, "--all");
 
+  // --all with no config is an error
+  if (allFlag && config === null) {
+    console.error("Error: --all requires a config file with named profiles.");
+    process.exit(2);
+  }
+
   // --all: check all profiles in parallel
   if (allFlag && config !== null) {
     const profileEntries = Object.entries(config.profiles);
@@ -507,14 +513,24 @@ async function cmdHealth(
 // ---------------------------------------------------------------------------
 async function cmdWatch(
   profile: ServerProfile,
+  profileName: string,
   args: string[]
 ): Promise<void> {
+  const flagsWithValues = [
+    "--topic", "-t",
+    "--group",
+    "--interval",
+    "--device",
+    "--priority",
+    "--sound",
+  ];
   const topicArg = getFlag(args, "--topic", "-t");
   const groupArg = getFlag(args, "--group");
   const intervalStr = getFlag(args, "--interval");
   const noSound = hasFlag(args, "--no-sound");
   const device = getFlag(args, "--device");
   const priorityStr = getFlag(args, "--priority");
+  const soundPath = getFlag(args, "--sound") ?? defaultSoundPath();
 
   // Resolve topics to watch
   let topics: string[] = [];
@@ -537,7 +553,7 @@ async function cmdWatch(
   }
 
   // Parse interval
-  let intervalSeconds = 10;
+  let intervalSeconds = 60;
   if (intervalStr !== undefined) {
     const n = parseInt(intervalStr, 10);
     if (isNaN(n) || n < 1) {
@@ -562,7 +578,8 @@ async function cmdWatch(
     noSound,
     device,
     priorityThreshold,
-    soundPath: defaultSoundPath(),
+    soundPath,
+    profileName,
   });
 }
 
@@ -1151,7 +1168,7 @@ async function main(): Promise<void> {
       break;
 
     case "watch":
-      await cmdWatch(profile, commandArgs);
+      await cmdWatch(profile, profileName, commandArgs);
       break;
 
     case "delete":
@@ -1161,25 +1178,6 @@ async function main(): Promise<void> {
     case "version":
       cmdVersion();
       break;
-
-    case "completions": {
-      const shell = commandArgs[0];
-      switch (shell) {
-        case "bash":
-          process.stdout.write(generateBashCompletions(config));
-          break;
-        case "zsh":
-          process.stdout.write(generateZshCompletions(config));
-          break;
-        case "fish":
-          process.stdout.write(generateFishCompletions(config));
-          break;
-        default:
-          console.error(`Unknown shell: "${shell ?? "(none)"}". Use: bash, zsh, fish`);
-          process.exit(2);
-      }
-      break;
-    }
 
     case "topics": {
       const subcommand = commandArgs[0];

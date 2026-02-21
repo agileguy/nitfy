@@ -121,7 +121,7 @@ _ntfy_completions() {
             COMPREPLY=( \$(compgen -W "30s 1m 5m 30m 1h 3h 12h" -- "\${cur}") )
             return 0
             ;;
-        --title|--tags|--click|--attach|--limit|--device)
+        --title|--tags|--click|--attach|--limit|--device|--interval|--group|--sound)
             # Free-form value; no completion
             return 0
             ;;
@@ -157,7 +157,7 @@ _ntfy_completions() {
             COMPREPLY=( \$(compgen -W "--json --all --quiet" -- "\${cur}") )
             ;;
         watch)
-            COMPREPLY=( \$(compgen -W "--topic -t --priority --no-sound --device --since --quiet" -- "\${cur}") )
+            COMPREPLY=( \$(compgen -W "--topic -t --group --interval --priority --no-sound --sound --device --quiet" -- "\${cur}") )
             ;;
         topics)
             # Find sub-command
@@ -354,10 +354,12 @@ _ntfy() {
                 watch)
                     _arguments \\
                         '(-t --topic)'{-t,--topic}'[Topic name]:topic:(${topicsZsh})' \\
+                        '--group[Topic group name]:group:' \\
+                        '--interval[Polling interval in seconds]:seconds:' \\
                         '--priority[Minimum priority for audio]:priority:(1 2 3 4 5 min low default high urgent max)' \\
                         '--no-sound[Disable audio notifications]' \\
+                        '--sound[Path to custom sound file]:path:_files' \\
                         '--device[Audio device for afplay]:device:' \\
-                        '--since[Lookback period]:since:(1h 6h 12h 24h 2d 7d all)' \\
                         '--quiet[Suppress non-essential output]'
                     ;;
                 completions)
@@ -582,10 +584,12 @@ complete -c ntfy -n '__ntfy_using_command health' -l all -d 'Check all profiles'
 # watch
 # ---------------------------------------------------------------------------
 complete -c ntfy -n '__ntfy_using_command watch' -l topic    -s t -d 'Topic name' -a '${topicList}'
+complete -c ntfy -n '__ntfy_using_command watch' -l group    -d 'Topic group name'
+complete -c ntfy -n '__ntfy_using_command watch' -l interval -d 'Polling interval in seconds'
 complete -c ntfy -n '__ntfy_using_command watch' -l priority -d 'Minimum priority for audio' -a '1 2 3 4 5 min low default high urgent max'
 complete -c ntfy -n '__ntfy_using_command watch' -l no-sound -d 'Disable audio notifications'
+complete -c ntfy -n '__ntfy_using_command watch' -l sound    -d 'Path to custom sound file'
 complete -c ntfy -n '__ntfy_using_command watch' -l device   -d 'Audio device for afplay'
-complete -c ntfy -n '__ntfy_using_command watch' -l since    -d 'Lookback period' -a '1h 6h 12h 24h 2d 7d all'
 
 # ---------------------------------------------------------------------------
 # completions subcommand

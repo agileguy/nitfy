@@ -9,6 +9,7 @@ import type { ServerProfile } from "./config.js";
 import type { NtfyMessage } from "./api.js";
 import { fetchMessages } from "./api.js";
 import { formatTimeShort, priorityBadge, formatTags } from "./display.js";
+import { loadState, saveState, setLastReadTime } from "./state.js";
 
 // ---------------------------------------------------------------------------
 // ANSI constants (inline for watch output independence from display.ts state)
@@ -126,7 +127,7 @@ export async function playSound(
 // ---------------------------------------------------------------------------
 
 export interface WatchOptions {
-  /** Polling interval in seconds (default: 10) */
+  /** Polling interval in seconds (default: 60) */
   intervalSeconds?: number;
   /** Skip audio playback entirely */
   noSound?: boolean;
@@ -138,6 +139,8 @@ export interface WatchOptions {
   soundPath?: string;
   /** AbortSignal to stop the watch loop cleanly (used in tests) */
   signal?: AbortSignal;
+  /** Profile name used to persist read state to state.json */
+  profileName?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -218,8 +221,9 @@ export async function watchLoop(
   topics: string[],
   options: WatchOptions = {}
 ): Promise<void> {
-  const intervalSeconds = options.intervalSeconds ?? 10;
+  const intervalSeconds = options.intervalSeconds ?? 60;
   const soundPath = options.soundPath ?? defaultSoundPath();
+  const profileName = options.profileName;
 
   // Per-topic tracking: last seen message timestamp (Unix seconds)
   const lastSeenTime: Map<string, number> = new Map();
@@ -237,7 +241,8 @@ export async function watchLoop(
   }
 
   // SIGINT handler - print session summary and exit cleanly
-  process.on("SIGINT", () => {
+  // Use process.once to prevent listener accumulation on repeated calls.
+  process.once("SIGINT", () => {
     const durationMs = Date.now() - startTime;
     const durationSec = Math.floor(durationMs / 1000);
     const mins = Math.floor(durationSec / 60);
@@ -326,6 +331,14 @@ export async function watchLoop(
           process.stdout.write(formatWatchMessage(msg, topic) + "\n\n");
         }
 
+        // Persist read state so that `ntfy unread` reflects messages seen
+        // during this watch session (SRD §4.6).
+        if (profileName !== undefined) {
+          let state = loadState();
+          state = setLastReadTime(state, profileName, topic, newestTime);
+          saveState(state);
+        }
+
         // Play sound for new messages that meet the priority threshold
         const threshold = options.priorityThreshold ?? 1;
         if (shouldTriggerSound(newMessages, threshold)) {
@@ -346,7 +359,7 @@ export async function watchLoop(
     if (signal?.aborted) break;
 
     // Wait for the next poll interval
-    await sleep(intervalSeconds * 1000);
+    await sleep(intervalSeconds * 1000, signal);
   }
 }
 
@@ -354,6 +367,12 @@ export async function watchLoop(
 // Utility
 // ---------------------------------------------------------------------------
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
 }
