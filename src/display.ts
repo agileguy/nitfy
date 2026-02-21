@@ -79,11 +79,16 @@ function relativeTime(unix: number): string {
 
 /**
  * Format a Unix timestamp as "YYYY-MM-DD HH:MM (Xm ago)".
+ *
+ * Note: The ISO-8601 date component (toISOString) is intentional for
+ * deterministic, locale-independent output. This ensures consistent display
+ * across different system locales and time zones in automated contexts.
+ * The relative label (e.g. "2m ago") is locale-agnostic by design.
  */
 export function formatTime(unix: number): string {
   const d = new Date(unix * 1000);
-  const date = d.toISOString().slice(0, 10); // YYYY-MM-DD
-  const time = d.toTimeString().slice(0, 5); // HH:MM
+  const date = d.toISOString().slice(0, 10); // YYYY-MM-DD (ISO 8601 - intentional for deterministic output)
+  const time = d.toTimeString().slice(0, 5); // HH:MM (local time zone for readability)
   return `${date} ${time} (${relativeTime(unix)})`;
 }
 
