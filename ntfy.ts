@@ -271,9 +271,9 @@ async function cmdUnread(
   }
 
   if (json) {
-    // Compute the earliest sinceTimestamp across topics
-    const sinceTimestamp = results.reduce((earliest, r) => {
-      const lastRead = getLastReadTime(loadState(), profileName, r.topic);
+    // Compute the earliest sinceTimestamp across topics (use already-loaded state)
+    const sinceTimestamp = topics.reduce((earliest, topic) => {
+      const lastRead = getLastReadTime(state, profileName, topic);
       return lastRead > 0 && (earliest === 0 || lastRead < earliest) ? lastRead : earliest;
     }, 0);
 
@@ -325,7 +325,9 @@ async function cmdSend(profile: ServerProfile, args: string[]): Promise<void> {
     tags,
   });
 
-  console.log(`Sent: ${result.id} to ${topic}`);
+  if (!quietMode) {
+    console.log(`Sent: ${result.id} to ${topic}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -900,7 +902,7 @@ async function main(): Promise<void> {
         return;
       case "list":
       case "ls":
-        cmdConfigList();
+        cmdConfigList(subArgs);
         return;
       case "use":
         cmdConfigUse(subArgs);

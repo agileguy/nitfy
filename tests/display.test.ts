@@ -1,21 +1,31 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { formatTime, formatTimeShort, priorityBadge, formatTags, setNoColor } from "../src/display";
+import {
+  formatTime,
+  formatTimeShort,
+  priorityBadge,
+  formatTags,
+  setNoColor,
+  setQuiet,
+  displayMessages,
+  displayUnreadSummary,
+} from "../src/display";
+import type { NtfyMessage } from "../src/api";
 
 // Import module namespace for potential future use
 import * as displayModule from "../src/display";
 
 // ---------------------------------------------------------------------------
-// Ensure ANSI color is enabled for tests that check for escape codes.
-// The module auto-detects noColor=true when stdout is not a TTY (e.g. in CI),
-// so we force it back to false for the test suite and restore after.
+// Ensure ANSI color is enabled and quiet mode is off for tests.
 // ---------------------------------------------------------------------------
 beforeEach(() => {
   setNoColor(false);
+  setQuiet(false);
 });
 
 afterEach(() => {
-  // Reset to a neutral state; individual tests control noColor as needed
+  // Reset to a neutral state
   setNoColor(false);
+  setQuiet(false);
 });
 
 // ---------------------------------------------------------------------------
@@ -153,5 +163,101 @@ describe("formatTags", () => {
     const result = formatTags(["test"]);
     // DIM = \x1b[2m
     expect(result).toContain("\x1b[2m");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// quietMode
+// ---------------------------------------------------------------------------
+
+/**
+ * Capture all stdout.write calls during a function, returning the
+ * concatenated string output.
+ */
+function captureStdout(fn: () => void): string {
+  const chunks: string[] = [];
+  const original = process.stdout.write.bind(process.stdout);
+  // @ts-expect-error - overriding write for test capture
+  process.stdout.write = (chunk: string) => {
+    chunks.push(chunk);
+    return true;
+  };
+  try {
+    fn();
+  } finally {
+    process.stdout.write = original;
+  }
+  return chunks.join("");
+}
+
+/** Build a minimal NtfyMessage for testing. */
+function makeMsg(overrides: Partial<NtfyMessage> = {}): NtfyMessage {
+  return {
+    id: "test-id",
+    time: Math.floor(Date.now() / 1000) - 60,
+    event: "message",
+    topic: "test-topic",
+    message: "Hello world",
+    ...overrides,
+  };
+}
+
+describe("quietMode - displayMessages", () => {
+  it("in quiet mode, only prints message bodies (no headers)", () => {
+    setQuiet(true);
+    const msgs = [makeMsg({ message: "body one" }), makeMsg({ message: "body two" })];
+    const output = captureStdout(() => displayMessages(msgs, "test-topic"));
+    // Should contain message text
+    expect(output).toContain("body one");
+    expect(output).toContain("body two");
+    // Should NOT contain topic label or separators
+    expect(output).not.toContain("test-topic");
+    expect(output).not.toContain("─");
+  });
+
+  it("in normal mode, includes topic header and separators", () => {
+    setNoColor(true); // suppress ANSI for easier assertion
+    setQuiet(false);
+    const msgs = [makeMsg({ message: "hello" })];
+    const output = captureStdout(() => displayMessages(msgs, "my-topic"));
+    expect(output).toContain("my-topic");
+    expect(output).toContain("─");
+  });
+
+  it("in quiet mode with no messages, produces no output", () => {
+    setQuiet(true);
+    const output = captureStdout(() => displayMessages([], "empty-topic"));
+    expect(output).toBe("");
+  });
+});
+
+describe("quietMode - displayUnreadSummary", () => {
+  it("in quiet mode, only prints the total count line", () => {
+    setQuiet(true);
+    const results = [
+      { topic: "FAST-all", messages: [makeMsg(), makeMsg()] },
+      { topic: "FAST-infra", messages: [makeMsg()] },
+    ];
+    const output = captureStdout(() => displayUnreadSummary(results, "1h"));
+    const trimmed = output.trim();
+    expect(trimmed).toBe("3");
+  });
+
+  it("in normal mode, includes full unread header and topic lines", () => {
+    setNoColor(true);
+    setQuiet(false);
+    const results = [
+      { topic: "FAST-all", messages: [makeMsg()] },
+    ];
+    const output = captureStdout(() => displayUnreadSummary(results, "1h"));
+    expect(output).toContain("Unread messages");
+    expect(output).toContain("FAST-all");
+  });
+
+  it("in quiet mode with zero unread, prints 0", () => {
+    setQuiet(true);
+    const results = [{ topic: "FAST-all", messages: [] }];
+    const output = captureStdout(() => displayUnreadSummary(results, "1h"));
+    expect(output.trim()).toBe("0");
   });
 });
