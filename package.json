@@ -1,6 +1,6 @@
 {
   "name": "nitfy",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "bun run ntfy.ts",

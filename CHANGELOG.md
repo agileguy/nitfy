@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.0] - 2026-02-21
+
+### Added
+- Distribution: compiled binary via `bun build --compile`
+- Comprehensive README.md with full command reference and migration guide
+- JSDoc on all 30+ exported functions
+- `send --json` returns full server response object
+- Phase 4A test suite (23 tests for exit codes, error output, ID truncation)
+
+### Fixed
+- All error messages routed to stderr
+- JSON error output `{"error":"..."}` on stdout when `--json` is active
+- Message IDs truncated to 8 chars in display (full ID in `--json`)
+- Consistent exit code 2 for all usage errors
+- `health --all` with no config now errors properly
+
 ## [0.3.0] - 2026-02-21
 
 ### Added
