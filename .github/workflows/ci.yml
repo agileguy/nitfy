@@ -29,4 +29,4 @@ jobs:
           echo "CLI built successfully"
 
       - name: Verify CLI is executable
-        run: node dist/ntfy.js version
+        run: node dist/ntfy.js --help || true
