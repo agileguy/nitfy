@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.0] - 2026-02-21
+
+### Added
+- Watch mode: `ntfy watch` with real-time polling, audio notifications, SIGINT session summary
+- Shell completions: `ntfy completions bash|zsh|fish` with dynamic profile/topic names
+- Enhanced send: `--delay`, `--click`, `--attach`, `--markdown`/`--md` flags
+- Enhanced health: `--all` flag for parallel multi-profile health checks
+- `--sound <path>` flag for custom watch notification sound
+- Default notification sound (`sounds/ping.aiff`)
+- Watch persists read state to state.json after displaying messages
+
+### Fixed
+- Default watch interval set to 60s per SRD (was 10s)
+- SIGINT handler uses `process.once` to prevent listener accumulation
+- Abort-aware sleep for clean watch loop teardown
+- `health --all` with no config file now errors properly
+- Correct ntfy headers: `X-Delay`, `X-Click`, `X-Attach`, `Content-Type: text/markdown`
+
 ## [0.2.0] - 2026-02-21
 
 ### Added

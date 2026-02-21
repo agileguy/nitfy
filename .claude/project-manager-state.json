@@ -2,10 +2,10 @@
   "srd_path": "docs/SRD-ntfy-cli.md",
   "repo_path": "/Users/de895996/repos/nitfy",
   "total_phases": 4,
-  "current_phase": 1,
-  "completed_phases": [],
+  "current_phase": 4,
+  "completed_phases": [1, 2, 3],
   "status": "in_progress",
   "version_file": "package.json",
   "initial_version": "0.1.0",
-  "current_version": "0.1.0"
+  "current_version": "0.3.0"
 }
