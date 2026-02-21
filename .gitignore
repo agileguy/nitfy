@@ -1,0 +1,4 @@
+node_modules/
+ntfy
+*.log
+.DS_Store
