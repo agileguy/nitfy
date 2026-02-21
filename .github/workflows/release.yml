@@ -51,4 +51,4 @@ jobs:
       - name: Verify publication
         run: |
           sleep 15
-          npm view nitfy@${{ steps.version.outputs.VERSION }} version
+          npm view @agileguy/nitfy@${{ steps.version.outputs.VERSION }} version

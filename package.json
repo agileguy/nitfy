@@ -1,5 +1,5 @@
 {
-  "name": "nitfy",
+  "name": "@agileguy/nitfy",
   "version": "1.0.0",
   "description": "ntfy CLI client — messages, send, unread, read, watch, health, topics, completions. Zero dependencies, runs with bun.",
   "type": "module",
