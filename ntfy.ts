@@ -7,9 +7,16 @@ import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { getFlag, hasFlag, getPositionals } from "./src/args.js";
-import { fetchMessages, sendMessage, checkHealth } from "./src/api.js";
+import { fetchMessages, sendMessage, checkHealth, deleteMessage, authHeader } from "./src/api.js";
 import type { NtfyMessage } from "./src/api.js";
-import { setNoColor, displayMessages, displayUnreadSummary } from "./src/display.js";
+import {
+  setNoColor,
+  setQuiet,
+  quietMode,
+  displayMessages,
+  displayUnreadSummary,
+  displayConfigList,
+} from "./src/display.js";
 import {
   loadConfig,
   saveConfig,
@@ -23,6 +30,45 @@ import {
   getLastReadTime,
   setLastReadTime,
 } from "./src/state.js";
+
+// ---------------------------------------------------------------------------
+// Version constant
+// ---------------------------------------------------------------------------
+const VERSION = "0.1.0";
+
+// ---------------------------------------------------------------------------
+// Priority name map: ntfy levels 1=min, 2=low, 3=default, 4=high, 5=urgent
+// SRD §9.5: aliases minimum→1, normal→3, maximum→5 are also supported.
+// ---------------------------------------------------------------------------
+const PRIORITY_NAMES: Record<string, number> = {
+  min: 1,
+  minimum: 1,
+  low: 2,
+  default: 3,
+  normal: 3,
+  high: 4,
+  urgent: 5,
+  max: 5,
+  maximum: 5,
+};
+
+/**
+ * Parse a priority input string to a number (1–5).
+ * Accepts numeric strings ("1"–"5") or named levels
+ * ("min", "low", "default", "high", "urgent", "max").
+ * Returns undefined if the input is not recognised.
+ */
+export function parsePriority(input: string): number | undefined {
+  const lower = input.trim().toLowerCase();
+  if (lower in PRIORITY_NAMES) {
+    return PRIORITY_NAMES[lower];
+  }
+  const n = parseInt(lower, 10);
+  if (!isNaN(n) && n >= 1 && n <= 5) {
+    return n;
+  }
+  return undefined;
+}
 
 // ---------------------------------------------------------------------------
 // Env loader - scan ~/.claude/.env for NTFY_* variables
@@ -59,8 +105,10 @@ Usage:
   ntfy <command> [flags]
 
 Commands:
-  messages [--topic/-t <topic>] [--since/-s <since>] [--json]
+  messages [--topic/-t <topic>] [--since/-s <since>] [--priority <level>] [--limit <n>] [--json]
       Fetch and display messages for a topic.
+      --priority: filter to messages at or above this level (1-5 or min/low/default/high/urgent)
+      --limit: show only the last N messages after filtering
 
   all
       Alias: fetch messages for the FAST-all (or first configured) topic.
@@ -74,8 +122,29 @@ Commands:
   read [--topic <topic>]
       Mark topic(s) as read (updates last-read timestamp).
 
+  delete <message-id> [--topic/-t <topic>]
+      Attempt to delete a message by sending DELETE to its message URL.
+
   health [--json]
       Check server health and version.
+
+  version
+      Print the nitfy version.
+
+  topics list [--json]
+      List watched topics and groups for the active profile.
+
+  topics add <topic>
+      Add a topic to the active profile's watch list.
+
+  topics remove <topic>
+      Remove a topic from the watch list (cannot remove defaultTopic).
+
+  topics group add <group-name> <topic1> [topic2...]
+      Create or update a named topic group.
+
+  topics group remove <group-name>
+      Delete a named topic group.
 
   config add <name> --url <url> --user <user> --password <pass> --topic <topic>
       Add a new server profile.
@@ -108,8 +177,35 @@ async function cmdMessages(profile: ServerProfile, args: string[]): Promise<void
   const topic = getFlag(args, "--topic", "-t") ?? profile.defaultTopic;
   const since = getFlag(args, "--since", "-s") ?? "12h";
   const json = hasFlag(args, "--json");
+  const priorityStr = getFlag(args, "--priority");
+  const limitStr = getFlag(args, "--limit");
 
-  const messages = await fetchMessages(profile.url, profile.user, profile.password, topic, since);
+  let messages = await fetchMessages(profile.url, profile.user, profile.password, topic, since);
+
+  // Apply --priority filter (client-side)
+  if (priorityStr !== undefined) {
+    const minPriority = parsePriority(priorityStr);
+    if (minPriority === undefined) {
+      console.error(
+        `Error: invalid --priority "${priorityStr}". Use 1-5 or: min, low, default, high, urgent`
+      );
+      process.exit(2);
+    }
+    // Messages with no priority field default to 3 (ntfy standard default priority)
+    messages = messages.filter((m) => (m.priority ?? 3) >= minPriority);
+  }
+
+  // Apply --limit filter (take last N).
+  // ntfy returns messages oldest-first, so slice(-n) correctly returns the
+  // most recent N messages while preserving chronological display order.
+  if (limitStr !== undefined) {
+    const n = parseInt(limitStr, 10);
+    if (isNaN(n) || n < 1) {
+      console.error(`Error: --limit must be a positive integer, got: "${limitStr}"`);
+      process.exit(2);
+    }
+    messages = messages.slice(-n);
+  }
 
   if (json) {
     console.log(JSON.stringify(messages, null, 2));
@@ -182,7 +278,23 @@ async function cmdUnread(
   }
 
   if (json) {
-    console.log(JSON.stringify(results, null, 2));
+    // Compute the earliest sinceTimestamp across topics (use already-loaded state)
+    const sinceTimestamp = topics.reduce((earliest, topic) => {
+      const lastRead = getLastReadTime(state, profileName, topic);
+      return lastRead > 0 && (earliest === 0 || lastRead < earliest) ? lastRead : earliest;
+    }, 0);
+
+    const output = {
+      profileName,
+      sinceTimestamp: sinceTimestamp > 0 ? sinceTimestamp : Math.floor(Date.now() / 1000),
+      total: totalCount,
+      topics: results.map((r) => ({
+        topic: r.topic,
+        count: r.messages.length,
+        messages: r.messages,
+      })),
+    };
+    console.log(JSON.stringify(output, null, 2));
     return;
   }
 
@@ -208,10 +320,10 @@ async function cmdSend(profile: ServerProfile, args: string[]): Promise<void> {
   const priorityStr = getFlag(args, "--priority", "-p");
   const tags = getFlag(args, "--tags");
 
-  const priority = priorityStr !== undefined ? parseInt(priorityStr, 10) : undefined;
-  if (priority !== undefined && (isNaN(priority) || priority < 1 || priority > 5)) {
-    console.error(`Error: --priority must be 1-5, got: "${priorityStr}"`);
-    process.exit(1);
+  const priority = priorityStr !== undefined ? parsePriority(priorityStr) : undefined;
+  if (priorityStr !== undefined && priority === undefined) {
+    console.error(`Error: invalid --priority "${priorityStr}". Use 1-5 or: min, low, default, high, urgent`);
+    process.exit(2);
   }
 
   const result = await sendMessage(profile.url, profile.user, profile.password, topic, message, {
@@ -220,15 +332,63 @@ async function cmdSend(profile: ServerProfile, args: string[]): Promise<void> {
     tags,
   });
 
-  console.log(`Sent: ${result.id} to ${topic}`);
+  if (!quietMode) {
+    console.log(`Sent: ${result.id} to ${topic}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Command: read (mark as read)
 // ---------------------------------------------------------------------------
-function cmdRead(profileName: string, profile: ServerProfile, args: string[]): void {
+function cmdRead(
+  profileName: string,
+  profile: ServerProfile,
+  args: string[],
+  config: ReturnType<typeof loadConfig>
+): void {
   const topicArg = getFlag(args, "--topic");
-  const topics = topicArg ? [topicArg] : profile.topics;
+  const allFlag = hasFlag(args, "--all");
+
+  // --all: mark all topics on ALL profiles as read
+  if (allFlag) {
+    if (!config) {
+      console.error("No config found. Cannot mark all topics as read.");
+      process.exit(1);
+      return;
+    }
+
+    let state = loadState();
+    let totalTopics = 0;
+    const profileCount = Object.keys(config.profiles).length;
+
+    for (const [pName, pProfile] of Object.entries(config.profiles)) {
+      for (const topic of pProfile.topics) {
+        state = setLastReadTime(state, pName, topic);
+        totalTopics++;
+      }
+    }
+    saveState(state);
+
+    if (!quietMode) {
+      console.log(`Marked ${totalTopics} topics as read across ${profileCount} profiles`);
+    }
+    return;
+  }
+
+  // --topic <t>: mark only the specified topic as read
+  if (topicArg) {
+    let state = loadState();
+    state = setLastReadTime(state, profileName, topicArg);
+    saveState(state);
+
+    if (!quietMode) {
+      console.log(`Marked ${topicArg} as read`);
+    }
+    return;
+  }
+
+  // Default: mark all topics in the current profile as read
+  const topics = profile.topics;
 
   if (topics.length === 0) {
     console.error("No topics to mark as read.");
@@ -241,7 +401,9 @@ function cmdRead(profileName: string, profile: ServerProfile, args: string[]): v
   }
   saveState(state);
 
-  console.log(`Marked as read: ${topics.join(", ")}`);
+  if (!quietMode) {
+    console.log(`Marked as read: ${topics.join(", ")}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -263,6 +425,254 @@ async function cmdHealth(profile: ServerProfile, args: string[]): Promise<void> 
 }
 
 // ---------------------------------------------------------------------------
+// Command: version
+// ---------------------------------------------------------------------------
+function cmdVersion(): void {
+  console.log(`nitfy v${VERSION}`);
+}
+
+// ---------------------------------------------------------------------------
+// Command: delete
+// ---------------------------------------------------------------------------
+async function cmdDelete(profile: ServerProfile, args: string[]): Promise<void> {
+  // --topic is accepted for backward compatibility but not used in the URL;
+  // ntfy message IDs are globally unique and the API route is DELETE /v1/messages/<id>.
+  const flagsWithValues = ["--topic", "-t"];
+  const positionals = getPositionals(args, flagsWithValues);
+  const messageId = positionals[0];
+
+  if (!messageId) {
+    console.error("Error: message ID is required. Usage: ntfy delete <message-id> [--topic/-t <topic>]");
+    process.exit(2);
+  }
+
+  try {
+    await deleteMessage(profile.url, profile.user, profile.password, messageId);
+
+    if (!quietMode) {
+      console.log(`Message "${messageId}" deleted.`);
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`Error: ${msg}`);
+    process.exit(1);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Command: topics list
+// ---------------------------------------------------------------------------
+function cmdTopicsList(
+  profile: ServerProfile,
+  profileName: string,
+  args: string[]
+): void {
+  const json = hasFlag(args, "--json");
+
+  if (json) {
+    console.log(
+      JSON.stringify(
+        { topics: profile.topics, defaultTopic: profile.defaultTopic, topicGroups: profile.topicGroups },
+        null,
+        2
+      )
+    );
+    return;
+  }
+
+  // Quiet mode: output one topic name per line, no decorations
+  if (quietMode) {
+    for (const t of profile.topics) {
+      console.log(t);
+    }
+    return;
+  }
+
+  const url = profile.url;
+  console.log(`Topics for ${profileName} (${url}):`);
+
+  if (profile.topics.length === 0) {
+    console.log("  (none)");
+  } else {
+    for (const t of profile.topics) {
+      const defaultMarker = t === profile.defaultTopic ? "  [default]" : "";
+      console.log(`  ${t}${defaultMarker}`);
+    }
+  }
+
+  const groups = profile.topicGroups;
+  const groupNames = Object.keys(groups);
+  if (groupNames.length > 0) {
+    console.log("\nGroups:");
+    for (const name of groupNames) {
+      const members = (groups[name] ?? []).join(", ");
+      console.log(`  ${name}  -> ${members}`);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Command: topics add
+// ---------------------------------------------------------------------------
+function cmdTopicsAdd(
+  config: Config,
+  profileName: string,
+  args: string[]
+): void {
+  const positionals = getPositionals(args, []);
+  const topic = positionals[0];
+
+  if (!topic) {
+    console.error("Error: topic name is required. Usage: ntfy topics add <topic>");
+    process.exit(2);
+  }
+
+  const profile = config.profiles[profileName]!;
+
+  if (profile.topics.includes(topic)) {
+    if (!quietMode) {
+      console.log(`Topic "${topic}" is already in profile "${profileName}".`);
+    }
+    return;
+  }
+
+  profile.topics = [...profile.topics, topic];
+  saveConfig(config);
+  if (!quietMode) {
+    console.log(`Topic "${topic}" added to profile "${profileName}".`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Command: topics remove
+// ---------------------------------------------------------------------------
+function cmdTopicsRemove(
+  config: Config,
+  profileName: string,
+  args: string[]
+): void {
+  const positionals = getPositionals(args, []);
+  const topic = positionals[0];
+
+  if (!topic) {
+    console.error("Error: topic name is required. Usage: ntfy topics remove <topic>");
+    process.exit(2);
+  }
+
+  const profile = config.profiles[profileName]!;
+
+  if (topic === profile.defaultTopic) {
+    console.error(
+      `Error: cannot remove "${topic}" because it is the default topic. ` +
+        `To remove it, first change the default topic with: ntfy config add`
+    );
+    process.exit(1);
+  }
+
+  if (!profile.topics.includes(topic)) {
+    console.error(`Error: topic "${topic}" is not in profile "${profileName}".`);
+    process.exit(1);
+  }
+
+  // Remove from topics array
+  profile.topics = profile.topics.filter((t) => t !== topic);
+
+  // Remove from any topic groups that reference it
+  for (const groupName of Object.keys(profile.topicGroups)) {
+    const members = profile.topicGroups[groupName];
+    if (members) {
+      profile.topicGroups[groupName] = members.filter((t) => t !== topic);
+    }
+  }
+
+  saveConfig(config);
+
+  // Clean up state.json entries for this topic
+  const state = loadState();
+  const key = `${profileName}/${topic}`;
+  const cleanedTopics = { ...state.topics };
+  delete cleanedTopics[key];
+  saveState({ ...state, topics: cleanedTopics });
+
+  if (!quietMode) {
+    console.log(`Topic "${topic}" removed from profile "${profileName}".`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Command: topics group add
+// ---------------------------------------------------------------------------
+function cmdTopicsGroupAdd(
+  config: Config,
+  profileName: string,
+  args: string[]
+): void {
+  const positionals = getPositionals(args, []);
+  const groupName = positionals[0];
+  const topicArgs = positionals.slice(1);
+
+  if (!groupName) {
+    console.error("Error: group name is required. Usage: ntfy topics group add <group-name> <topic1> [topic2...]");
+    process.exit(2);
+  }
+
+  if (topicArgs.length === 0) {
+    console.error("Error: at least one topic is required.");
+    process.exit(2);
+  }
+
+  const profile = config.profiles[profileName]!;
+
+  // Validate that all topics are in the watched list
+  const unknownTopics = topicArgs.filter((t) => !profile.topics.includes(t));
+  if (unknownTopics.length > 0) {
+    console.error(
+      `Error: the following topics are not in the watched list: ${unknownTopics.join(", ")}. ` +
+        `Add them first with: ntfy topics add <topic>`
+    );
+    process.exit(1);
+  }
+
+  profile.topicGroups = { ...profile.topicGroups, [groupName]: topicArgs };
+  saveConfig(config);
+  if (!quietMode) {
+    console.log(`Group "${groupName}" set to: ${topicArgs.join(", ")}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Command: topics group remove
+// ---------------------------------------------------------------------------
+function cmdTopicsGroupRemove(
+  config: Config,
+  profileName: string,
+  args: string[]
+): void {
+  const positionals = getPositionals(args, []);
+  const groupName = positionals[0];
+
+  if (!groupName) {
+    console.error("Error: group name is required. Usage: ntfy topics group remove <group-name>");
+    process.exit(2);
+  }
+
+  const profile = config.profiles[profileName]!;
+
+  if (!(groupName in profile.topicGroups)) {
+    console.error(`Error: group "${groupName}" does not exist in profile "${profileName}".`);
+    process.exit(1);
+  }
+
+  const updatedGroups = { ...profile.topicGroups };
+  delete updatedGroups[groupName];
+  profile.topicGroups = updatedGroups;
+  saveConfig(config);
+  if (!quietMode) {
+    console.log(`Group "${groupName}" removed from profile "${profileName}".`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Command: config add
 // ---------------------------------------------------------------------------
 function cmdConfigAdd(args: string[]): void {
@@ -273,7 +683,7 @@ function cmdConfigAdd(args: string[]): void {
 
   if (!name) {
     console.error("Error: profile name is required. Usage: ntfy config add <name> --url ...");
-    process.exit(1);
+    process.exit(2);
   }
 
   const url = getFlag(args, "--url");
@@ -288,7 +698,7 @@ function cmdConfigAdd(args: string[]): void {
     for (const e of errors) {
       console.error(`  - ${e}`);
     }
-    process.exit(1);
+    process.exit(2);
   }
 
   const profile: ServerProfile = {
@@ -308,7 +718,7 @@ function cmdConfigAdd(args: string[]): void {
   config.profiles[name] = profile;
   saveConfig(config);
 
-  console.log(`Profile "${name}" added.`);
+  console.log(`Profile "${name}" saved. Run: ntfy config use ${name}`);
   if (config.activeProfile === name) {
     console.log(`Set as active profile.`);
   }
@@ -323,7 +733,7 @@ function cmdConfigRemove(args: string[]): void {
 
   if (!name) {
     console.error("Error: profile name is required. Usage: ntfy config remove <name>");
-    process.exit(1);
+    process.exit(2);
   }
 
   const config = loadConfig();
@@ -365,20 +775,45 @@ function cmdConfigRemove(args: string[]): void {
 // ---------------------------------------------------------------------------
 // Command: config list
 // ---------------------------------------------------------------------------
-function cmdConfigList(): void {
+function cmdConfigList(args: string[]): void {
+  const json = hasFlag(args, "--json");
   const config = loadConfig();
   if (config === null || Object.keys(config.profiles).length === 0) {
-    console.log("No profiles configured.");
+    if (json) {
+      console.log(JSON.stringify({ active: "", profiles: [] }, null, 2));
+    } else {
+      console.log("No profiles configured.");
+    }
     return;
   }
 
-  for (const [name, profile] of Object.entries(config.profiles)) {
-    const active = name === config.activeProfile ? " (active)" : "";
-    console.log(`  ${name}${active}`);
-    console.log(`    url:   ${profile.url}`);
-    console.log(`    user:  ${profile.user}`);
-    console.log(`    topic: ${profile.defaultTopic}`);
+  const profiles = Object.entries(config.profiles).map(([name, profile]) => ({
+    name,
+    url: profile.url,
+    user: profile.user || "",
+    topicCount: profile.topics.length,
+  }));
+
+  if (json) {
+    // Passwords are NEVER included in JSON output
+    console.log(
+      JSON.stringify(
+        {
+          active: config.activeProfile,
+          profiles,
+        },
+        null,
+        2
+      )
+    );
+    return;
   }
+
+  // Human-readable SRD format
+  displayConfigList({
+    active: config.activeProfile,
+    profiles,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -390,7 +825,7 @@ function cmdConfigUse(args: string[]): void {
 
   if (!name) {
     console.error("Error: profile name is required. Usage: ntfy config use <name>");
-    process.exit(1);
+    process.exit(2);
   }
 
   const config = loadConfig();
@@ -430,10 +865,16 @@ async function main(): Promise<void> {
 
   const serverOverride = getFlag(rawArgs, "--server");
   const noColorFlag = hasFlag(rawArgs, "--no-color");
+  const quietFlag = hasFlag(rawArgs, "--quiet", "-q");
 
   // Apply no-color globally via the display module setter
   if (noColorFlag) {
     setNoColor(true);
+  }
+
+  // Apply quiet mode globally
+  if (quietFlag) {
+    setQuiet(true);
   }
 
   // Identify command (first non-flag token), skipping global flags that consume a value.
@@ -469,7 +910,7 @@ async function main(): Promise<void> {
         return;
       case "list":
       case "ls":
-        cmdConfigList();
+        cmdConfigList(subArgs);
         return;
       case "use":
         cmdConfigUse(subArgs);
@@ -483,7 +924,7 @@ async function main(): Promise<void> {
       default:
         console.error(`Unknown config subcommand: "${subcommand ?? "(none)"}"`);
         console.error("Available: add, remove, list, use, show");
-        process.exit(1);
+        process.exit(2);
     }
   }
 
@@ -525,19 +966,88 @@ async function main(): Promise<void> {
       break;
 
     case "read":
-      cmdRead(profileName, profile, commandArgs);
+      cmdRead(profileName, profile, commandArgs, config);
       break;
 
     case "health":
       await cmdHealth(profile, commandArgs);
       break;
 
+    case "delete":
+      await cmdDelete(profile, commandArgs);
+      break;
+
+    case "version":
+      cmdVersion();
+      break;
+
+    case "topics": {
+      const subcommand = commandArgs[0];
+      const subArgs = commandArgs.slice(1);
+
+      // topics group is a nested sub-command
+      if (subcommand === "group") {
+        const groupSub = subArgs[0];
+        const groupArgs = subArgs.slice(1);
+
+        switch (groupSub) {
+          case "add":
+            if (!config) {
+              console.error("Error: no config found. Create a profile first.");
+              process.exit(1);
+            }
+            cmdTopicsGroupAdd(config, profileName, groupArgs);
+            break;
+          case "remove":
+          case "rm":
+            if (!config) {
+              console.error("Error: no config found. Create a profile first.");
+              process.exit(1);
+            }
+            cmdTopicsGroupRemove(config, profileName, groupArgs);
+            break;
+          default:
+            console.error(`Unknown topics group subcommand: "${groupSub ?? "(none)"}"`);
+            console.error("Available: add, remove");
+            process.exit(2);
+        }
+        break;
+      }
+
+      switch (subcommand) {
+        case "list":
+        case "ls":
+          cmdTopicsList(profile, profileName, subArgs);
+          break;
+        case "add":
+          if (!config) {
+            console.error("Error: no config found. Create a profile first.");
+            process.exit(1);
+          }
+          cmdTopicsAdd(config, profileName, subArgs);
+          break;
+        case "remove":
+        case "rm":
+          if (!config) {
+            console.error("Error: no config found. Create a profile first.");
+            process.exit(1);
+          }
+          cmdTopicsRemove(config, profileName, subArgs);
+          break;
+        default:
+          console.error(`Unknown topics subcommand: "${subcommand ?? "(none)"}"`);
+          console.error("Available: list, add, remove, group");
+          process.exit(2);
+      }
+      break;
+    }
+
     default:
       if (command) {
         console.error(`Unknown command: "${command}"`);
       }
       showHelp();
-      process.exit(1);
+      process.exit(2);
   }
 }
 

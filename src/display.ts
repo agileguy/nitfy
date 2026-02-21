@@ -35,6 +35,20 @@ export function setNoColor(v: boolean): void {
   noColor = v;
 }
 
+/**
+ * Whether to suppress decorative/non-essential output.
+ * When true: only raw data (message bodies, counts) is printed.
+ * Use setQuiet() to enable from the --quiet / -q flag.
+ */
+export let quietMode = false;
+
+/**
+ * Override the quietMode setting programmatically.
+ */
+export function setQuiet(v: boolean): void {
+  quietMode = v;
+}
+
 function c(code: string, text: string): string {
   if (noColor) return text;
   return `${code}${text}${RESET}`;
@@ -137,11 +151,20 @@ function separator(): void {
 
 /**
  * Display a formatted list of messages for a given topic.
+ * In quiet mode: only message bodies are printed (no headers, separators, or decorations).
  */
 export function displayMessages(
   messages: NtfyMessage[],
   topicLabel: string
 ): void {
+  if (quietMode) {
+    for (const msg of messages) {
+      const body = msg.message ?? "";
+      if (body) process.stdout.write(`${body}\n`);
+    }
+    return;
+  }
+
   if (messages.length === 0) {
     process.stdout.write(
       c(DIM, `No messages found for topic ${topicLabel}\n`)
@@ -189,6 +212,7 @@ const MAX_PREVIEWS_PER_TOPIC = 5;
 
 /**
  * Display a grouped unread summary across multiple topics.
+ * In quiet mode: only prints the total count line.
  *
  * @param results    - Array of {topic, messages} objects
  * @param sinceLabel - Human-readable "since" string, e.g. "1h" or "all"
@@ -198,6 +222,11 @@ export function displayUnreadSummary(
   sinceLabel: string
 ): void {
   const total = results.reduce((n, r) => n + r.messages.length, 0);
+
+  if (quietMode) {
+    process.stdout.write(`${total}\n`);
+    return;
+  }
 
   process.stdout.write(
     `\n${c(BOLD, "Unread messages")} ${c(DIM, `since ${sinceLabel}`)} — ${c(GREEN, `${total} total`)}\n\n`
@@ -233,4 +262,52 @@ export function displayUnreadSummary(
 
     process.stdout.write("\n");
   }
+}
+
+// ---------------------------------------------------------------------------
+// Config list display
+// ---------------------------------------------------------------------------
+
+export interface ConfigListProfile {
+  name: string;
+  url: string;
+  user: string;
+  topicCount: number;
+}
+
+export interface ConfigListData {
+  active: string;
+  profiles: ConfigListProfile[];
+}
+
+/**
+ * Display a formatted config profile list.
+ *
+ * Format:
+ *   Server Profiles:
+ *     * home      https://ntfy.example.com  (dan)  topics: 3
+ *       personal  https://ntfy.sh           (anon) topics: 1
+ *
+ *   Active: home
+ */
+export function displayConfigList(data: ConfigListData): void {
+  process.stdout.write("Server Profiles:\n");
+
+  // Compute max name length for alignment
+  const maxNameLen = Math.max(...data.profiles.map((p) => p.name.length), 4);
+
+  for (const profile of data.profiles) {
+    const isActive = profile.name === data.active;
+    const marker = isActive ? c(GREEN, "*") : " ";
+    const name = profile.name.padEnd(maxNameLen);
+    const userLabel = profile.user ? `(${profile.user})` : "(anon)";
+    const topicLabel = c(DIM, `topics: ${profile.topicCount}`);
+
+    process.stdout.write(
+      `  ${marker} ${c(isActive ? BOLD + CYAN : CYAN, name)}  ${profile.url}  ${c(DIM, userLabel)}  ${topicLabel}\n`
+    );
+  }
+
+  process.stdout.write("\n");
+  process.stdout.write(`Active: ${c(BOLD, data.active)}\n`);
 }
