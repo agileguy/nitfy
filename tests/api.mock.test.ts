@@ -209,6 +209,155 @@ describe("sendMessage", () => {
 
     spy.mockRestore();
   });
+
+  // -------------------------------------------------------------------------
+  // Phase 3B: Enhanced send headers
+  // -------------------------------------------------------------------------
+
+  it("sends X-Delay header when delay option is set", async () => {
+    const returned: import("../src/api").NtfyMessage = {
+      id: "abc", time: 1700000000, event: "message", topic: "alerts",
+    };
+    const spy = spyOn(globalThis, "fetch").mockResolvedValue(makeJsonResponse(returned));
+
+    await sendMessage("https://ntfy.sh", "", "", "alerts", "body", { delay: "30m" });
+
+    const [_url, init] = spy.mock.calls[0] as [string, RequestInit];
+    const headers = init?.headers as Record<string, string>;
+    expect(headers["X-Delay"]).toBe("30m");
+
+    spy.mockRestore();
+  });
+
+  it("sends X-Click header when click option is set", async () => {
+    const returned: import("../src/api").NtfyMessage = {
+      id: "abc", time: 1700000000, event: "message", topic: "alerts",
+    };
+    const spy = spyOn(globalThis, "fetch").mockResolvedValue(makeJsonResponse(returned));
+
+    await sendMessage("https://ntfy.sh", "", "", "alerts", "body", { click: "https://example.com" });
+
+    const [_url, init] = spy.mock.calls[0] as [string, RequestInit];
+    const headers = init?.headers as Record<string, string>;
+    expect(headers["X-Click"]).toBe("https://example.com");
+
+    spy.mockRestore();
+  });
+
+  it("sends X-Attach header when attach option is set", async () => {
+    const returned: import("../src/api").NtfyMessage = {
+      id: "abc", time: 1700000000, event: "message", topic: "alerts",
+    };
+    const spy = spyOn(globalThis, "fetch").mockResolvedValue(makeJsonResponse(returned));
+
+    await sendMessage("https://ntfy.sh", "", "", "alerts", "body", { attach: "https://example.com/file.pdf" });
+
+    const [_url, init] = spy.mock.calls[0] as [string, RequestInit];
+    const headers = init?.headers as Record<string, string>;
+    expect(headers["X-Attach"]).toBe("https://example.com/file.pdf");
+
+    spy.mockRestore();
+  });
+
+  it("sets Content-Type to text/markdown when markdown option is true", async () => {
+    const returned: import("../src/api").NtfyMessage = {
+      id: "abc", time: 1700000000, event: "message", topic: "alerts",
+    };
+    const spy = spyOn(globalThis, "fetch").mockResolvedValue(makeJsonResponse(returned));
+
+    await sendMessage("https://ntfy.sh", "", "", "alerts", "**bold message**", { markdown: true });
+
+    const [_url, init] = spy.mock.calls[0] as [string, RequestInit];
+    const headers = init?.headers as Record<string, string>;
+    expect(headers["Content-Type"]).toBe("text/markdown");
+
+    spy.mockRestore();
+  });
+
+  it("uses text/plain Content-Type when markdown option is false", async () => {
+    const returned: import("../src/api").NtfyMessage = {
+      id: "abc", time: 1700000000, event: "message", topic: "alerts",
+    };
+    const spy = spyOn(globalThis, "fetch").mockResolvedValue(makeJsonResponse(returned));
+
+    await sendMessage("https://ntfy.sh", "", "", "alerts", "plain message", { markdown: false });
+
+    const [_url, init] = spy.mock.calls[0] as [string, RequestInit];
+    const headers = init?.headers as Record<string, string>;
+    expect(headers["Content-Type"]).toBe("text/plain");
+
+    spy.mockRestore();
+  });
+
+  it("does not send X-Delay when delay option is not provided", async () => {
+    const returned: import("../src/api").NtfyMessage = {
+      id: "abc", time: 1700000000, event: "message", topic: "alerts",
+    };
+    const spy = spyOn(globalThis, "fetch").mockResolvedValue(makeJsonResponse(returned));
+
+    await sendMessage("https://ntfy.sh", "", "", "alerts", "body");
+
+    const [_url, init] = spy.mock.calls[0] as [string, RequestInit];
+    const headers = init?.headers as Record<string, string>;
+    expect(headers["X-Delay"]).toBeUndefined();
+
+    spy.mockRestore();
+  });
+
+  it("does not send X-Click when click option is not provided", async () => {
+    const returned: import("../src/api").NtfyMessage = {
+      id: "abc", time: 1700000000, event: "message", topic: "alerts",
+    };
+    const spy = spyOn(globalThis, "fetch").mockResolvedValue(makeJsonResponse(returned));
+
+    await sendMessage("https://ntfy.sh", "", "", "alerts", "body");
+
+    const [_url, init] = spy.mock.calls[0] as [string, RequestInit];
+    const headers = init?.headers as Record<string, string>;
+    expect(headers["X-Click"]).toBeUndefined();
+
+    spy.mockRestore();
+  });
+
+  it("does not send X-Attach when attach option is not provided", async () => {
+    const returned: import("../src/api").NtfyMessage = {
+      id: "abc", time: 1700000000, event: "message", topic: "alerts",
+    };
+    const spy = spyOn(globalThis, "fetch").mockResolvedValue(makeJsonResponse(returned));
+
+    await sendMessage("https://ntfy.sh", "", "", "alerts", "body");
+
+    const [_url, init] = spy.mock.calls[0] as [string, RequestInit];
+    const headers = init?.headers as Record<string, string>;
+    expect(headers["X-Attach"]).toBeUndefined();
+
+    spy.mockRestore();
+  });
+
+  it("can combine multiple enhanced headers in one call", async () => {
+    const returned: import("../src/api").NtfyMessage = {
+      id: "abc", time: 1700000000, event: "message", topic: "alerts",
+    };
+    const spy = spyOn(globalThis, "fetch").mockResolvedValue(makeJsonResponse(returned));
+
+    await sendMessage("https://ntfy.sh", "", "", "alerts", "**rich message**", {
+      title: "Rich Alert",
+      delay: "5m",
+      click: "https://dashboard.example.com",
+      attach: "https://cdn.example.com/report.pdf",
+      markdown: true,
+    });
+
+    const [_url, init] = spy.mock.calls[0] as [string, RequestInit];
+    const headers = init?.headers as Record<string, string>;
+    expect(headers["Title"]).toBe("Rich Alert");
+    expect(headers["X-Delay"]).toBe("5m");
+    expect(headers["X-Click"]).toBe("https://dashboard.example.com");
+    expect(headers["X-Attach"]).toBe("https://cdn.example.com/report.pdf");
+    expect(headers["Content-Type"]).toBe("text/markdown");
+
+    spy.mockRestore();
+  });
 });
 
 // ---------------------------------------------------------------------------
