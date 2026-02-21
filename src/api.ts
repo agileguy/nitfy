@@ -154,16 +154,16 @@ export async function sendMessage(
     headers["Tags"] = options.tags;
   }
   if (options.delay) {
-    headers["Delay"] = options.delay;
+    headers["X-Delay"] = options.delay;
   }
   if (options.click) {
-    headers["Click"] = options.click;
+    headers["X-Click"] = options.click;
   }
   if (options.attach) {
-    headers["Attach"] = options.attach;
+    headers["X-Attach"] = options.attach;
   }
   if (options.markdown) {
-    headers["Markdown"] = "yes";
+    headers["Content-Type"] = "text/markdown";
   }
 
   const response = await fetch(endpoint, {

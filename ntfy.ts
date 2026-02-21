@@ -30,6 +30,12 @@ import {
   getLastReadTime,
   setLastReadTime,
 } from "./src/state.js";
+import { watchLoop, defaultSoundPath } from "./src/watch.js";
+import {
+  generateBashCompletions,
+  generateZshCompletions,
+  generateFishCompletions,
+} from "./src/completions.js";
 
 // ---------------------------------------------------------------------------
 // Version constant
@@ -125,8 +131,13 @@ Commands:
   delete <message-id> [--topic/-t <topic>]
       Attempt to delete a message by sending DELETE to its message URL.
 
-  health [--json]
+  watch [--topic/-t <topic>] [--group <group>] [--interval <seconds>] [--no-sound] [--device <device>] [--priority <level>]
+      Watch topic(s) for new messages in real time, polling every N seconds (default 10).
+      Plays an audio ping on new messages. Ctrl+C prints a session summary.
+
+  health [--json] [--all]
       Check server health and version.
+      --all: check all configured profiles in parallel (non-zero exit if any unhealthy)
 
   version
       Print the nitfy version.
@@ -306,7 +317,15 @@ async function cmdUnread(
 // Command: send
 // ---------------------------------------------------------------------------
 async function cmdSend(profile: ServerProfile, args: string[]): Promise<void> {
-  const flagsWithValues = ["--topic", "-t", "--title", "--priority", "-p", "--tags"];
+  const flagsWithValues = [
+    "--topic", "-t",
+    "--title",
+    "--priority", "-p",
+    "--tags",
+    "--delay",
+    "--click",
+    "--attach",
+  ];
   const positionals = getPositionals(args, flagsWithValues);
 
   if (positionals.length === 0) {
@@ -319,6 +338,10 @@ async function cmdSend(profile: ServerProfile, args: string[]): Promise<void> {
   const title = getFlag(args, "--title");
   const priorityStr = getFlag(args, "--priority", "-p");
   const tags = getFlag(args, "--tags");
+  const delay = getFlag(args, "--delay");
+  const click = getFlag(args, "--click");
+  const attach = getFlag(args, "--attach");
+  const markdown = hasFlag(args, "--markdown") || hasFlag(args, "--md");
 
   const priority = priorityStr !== undefined ? parsePriority(priorityStr) : undefined;
   if (priorityStr !== undefined && priority === undefined) {
@@ -330,6 +353,10 @@ async function cmdSend(profile: ServerProfile, args: string[]): Promise<void> {
     title,
     priority,
     tags,
+    delay,
+    click,
+    attach,
+    markdown,
   });
 
   if (!quietMode) {
@@ -409,8 +436,59 @@ function cmdRead(
 // ---------------------------------------------------------------------------
 // Command: health
 // ---------------------------------------------------------------------------
-async function cmdHealth(profile: ServerProfile, args: string[]): Promise<void> {
+async function cmdHealth(
+  profile: ServerProfile,
+  args: string[],
+  config: ReturnType<typeof loadConfig>
+): Promise<void> {
   const json = hasFlag(args, "--json");
+  const allFlag = hasFlag(args, "--all");
+
+  // --all: check all profiles in parallel
+  if (allFlag && config !== null) {
+    const profileEntries = Object.entries(config.profiles);
+
+    const results = await Promise.all(
+      profileEntries.map(async ([name, p]) => {
+        try {
+          const health = await checkHealth(p.url, p.user, p.password);
+          return {
+            profile: name,
+            url: p.url,
+            healthy: health.healthy,
+            version: health.version,
+          };
+        } catch (err: unknown) {
+          return {
+            profile: name,
+            url: p.url,
+            healthy: false,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+      })
+    );
+
+    const anyUnhealthy = results.some((r) => !r.healthy);
+
+    if (json) {
+      console.log(JSON.stringify(results, null, 2));
+    } else {
+      for (const r of results) {
+        const status = r.healthy ? "healthy" : "UNHEALTHY";
+        const ver = r.version ? ` v${r.version}` : "";
+        const errorStr = r.error ? ` (${r.error})` : "";
+        console.log(`${r.profile}: ${status}${ver} — ${r.url}${errorStr}`);
+      }
+    }
+
+    if (anyUnhealthy) {
+      process.exit(1);
+    }
+    return;
+  }
+
+  // Single profile health check
   const result = await checkHealth(profile.url, profile.user, profile.password);
 
   if (json) {
@@ -422,6 +500,70 @@ async function cmdHealth(profile: ServerProfile, args: string[]): Promise<void> 
     console.log(`Server appears unhealthy: ${profile.url}`);
     process.exit(1);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Command: watch
+// ---------------------------------------------------------------------------
+async function cmdWatch(
+  profile: ServerProfile,
+  args: string[]
+): Promise<void> {
+  const topicArg = getFlag(args, "--topic", "-t");
+  const groupArg = getFlag(args, "--group");
+  const intervalStr = getFlag(args, "--interval");
+  const noSound = hasFlag(args, "--no-sound");
+  const device = getFlag(args, "--device");
+  const priorityStr = getFlag(args, "--priority");
+
+  // Resolve topics to watch
+  let topics: string[] = [];
+
+  if (topicArg) {
+    topics = [topicArg];
+  } else if (groupArg) {
+    const group = profile.topicGroups[groupArg];
+    if (!group || group.length === 0) {
+      console.error(`Error: group "${groupArg}" not found in active profile.`);
+      process.exit(1);
+    }
+    topics = group;
+  } else if (profile.topics.length > 0) {
+    // Default: watch all configured topics
+    topics = profile.topics;
+  } else {
+    // Fall back to default topic
+    topics = [profile.defaultTopic];
+  }
+
+  // Parse interval
+  let intervalSeconds = 10;
+  if (intervalStr !== undefined) {
+    const n = parseInt(intervalStr, 10);
+    if (isNaN(n) || n < 1) {
+      console.error(`Error: --interval must be a positive integer, got: "${intervalStr}"`);
+      process.exit(2);
+    }
+    intervalSeconds = n;
+  }
+
+  // Parse priority threshold
+  let priorityThreshold: number | undefined;
+  if (priorityStr !== undefined) {
+    priorityThreshold = parsePriority(priorityStr);
+    if (priorityThreshold === undefined) {
+      console.error(`Error: invalid --priority "${priorityStr}". Use 1-5 or: min, low, default, high, urgent`);
+      process.exit(2);
+    }
+  }
+
+  await watchLoop(profile, topics, {
+    intervalSeconds,
+    noSound,
+    device,
+    priorityThreshold,
+    soundPath: defaultSoundPath(),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -849,6 +991,35 @@ function cmdConfigShow(profile: ServerProfile): void {
 }
 
 // ---------------------------------------------------------------------------
+// Command: completions
+// ---------------------------------------------------------------------------
+function cmdCompletions(args: string[]): void {
+  // The completions command doesn't need an active profile;
+  // we load config only to embed dynamic profile/topic names.
+  const shell = args[0];
+  const config = loadConfig();
+
+  switch (shell) {
+    case "bash":
+      process.stdout.write(generateBashCompletions(config));
+      break;
+    case "zsh":
+      process.stdout.write(generateZshCompletions(config));
+      break;
+    case "fish":
+      process.stdout.write(generateFishCompletions(config));
+      break;
+    default:
+      console.error(
+        `Error: unknown shell "${shell ?? "(none)"}". ` +
+          `Supported shells: bash, zsh, fish`
+      );
+      console.error("Usage: ntfy completions <bash|zsh|fish>");
+      process.exit(2);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main dispatcher
 // ---------------------------------------------------------------------------
 async function main(): Promise<void> {
@@ -894,6 +1065,12 @@ async function main(): Promise<void> {
   }
   const command = commandIdx >= 0 ? rawArgs[commandIdx] : undefined;
   const commandArgs = commandIdx >= 0 ? rawArgs.slice(commandIdx + 1) : [];
+
+  // Completions command doesn't need a profile
+  if (command === "completions") {
+    cmdCompletions(commandArgs);
+    return;
+  }
 
   // Config commands don't always need a profile
   if (command === "config") {
@@ -970,7 +1147,11 @@ async function main(): Promise<void> {
       break;
 
     case "health":
-      await cmdHealth(profile, commandArgs);
+      await cmdHealth(profile, commandArgs, config);
+      break;
+
+    case "watch":
+      await cmdWatch(profile, commandArgs);
       break;
 
     case "delete":
@@ -980,6 +1161,25 @@ async function main(): Promise<void> {
     case "version":
       cmdVersion();
       break;
+
+    case "completions": {
+      const shell = commandArgs[0];
+      switch (shell) {
+        case "bash":
+          process.stdout.write(generateBashCompletions(config));
+          break;
+        case "zsh":
+          process.stdout.write(generateZshCompletions(config));
+          break;
+        case "fish":
+          process.stdout.write(generateFishCompletions(config));
+          break;
+        default:
+          console.error(`Unknown shell: "${shell ?? "(none)"}". Use: bash, zsh, fish`);
+          process.exit(2);
+      }
+      break;
+    }
 
     case "topics": {
       const subcommand = commandArgs[0];
