@@ -183,6 +183,38 @@ export async function sendMessage(
 }
 
 /**
+ * Delete a message by its globally-unique message ID.
+ *
+ * The ntfy API requires DELETE /v1/messages/<id>. Message IDs are globally
+ * unique, so no topic is needed in the URL.
+ *
+ * @param url       - ntfy server base URL (e.g. "https://ntfy.sh")
+ * @param user      - Username (empty string for anonymous)
+ * @param password  - Password (empty string for anonymous)
+ * @param messageId - The globally-unique message ID to delete
+ */
+export async function deleteMessage(
+  url: string,
+  user: string,
+  password: string,
+  messageId: string
+): Promise<void> {
+  const base = normaliseUrl(url);
+  const endpoint = `${base}/v1/messages/${encodeURIComponent(messageId)}`;
+
+  const response = await fetch(endpoint, {
+    method: "DELETE",
+    headers: buildHeaders(user, password),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `ntfy delete failed: HTTP ${response.status} ${response.statusText}`
+    );
+  }
+}
+
+/**
  * Check the health of an ntfy server.
  *
  * @returns Object with `healthy: boolean` and optional `version` string.

@@ -1,5 +1,5 @@
 import { describe, it, expect, spyOn, afterEach, mock } from "bun:test";
-import { fetchMessages, sendMessage, authHeader, checkHealth } from "../src/api";
+import { fetchMessages, sendMessage, authHeader, checkHealth, deleteMessage } from "../src/api";
 
 // ---------------------------------------------------------------------------
 // Helper to create a minimal fake Response
@@ -261,6 +261,95 @@ describe("checkHealth", () => {
     const result = await checkHealth("https://ntfy.sh", "", "");
 
     expect(result.healthy).toBe(false);
+
+    spy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deleteMessage
+// ---------------------------------------------------------------------------
+
+describe("deleteMessage", () => {
+  afterEach(() => {
+    mock.restore();
+  });
+
+  it("sends DELETE to /v1/messages/<id>", async () => {
+    const spy = spyOn(globalThis, "fetch").mockResolvedValue(makeResponse("", 200));
+
+    await deleteMessage("https://ntfy.sh", "", "", "abc123");
+
+    const [url, init] = spy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://ntfy.sh/v1/messages/abc123");
+    expect(init?.method).toBe("DELETE");
+
+    spy.mockRestore();
+  });
+
+  it("URL-encodes the message ID", async () => {
+    const spy = spyOn(globalThis, "fetch").mockResolvedValue(makeResponse("", 200));
+
+    await deleteMessage("https://ntfy.sh", "", "", "id with spaces");
+
+    const [url] = spy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://ntfy.sh/v1/messages/id%20with%20spaces");
+
+    spy.mockRestore();
+  });
+
+  it("passes Authorization header when credentials provided", async () => {
+    const spy = spyOn(globalThis, "fetch").mockResolvedValue(makeResponse("", 200));
+
+    await deleteMessage("https://ntfy.sh", "alice", "secret", "abc123");
+
+    const [_url, init] = spy.mock.calls[0] as [string, RequestInit];
+    const headers = init?.headers as Record<string, string>;
+    const expected = "Basic " + Buffer.from("alice:secret").toString("base64");
+    expect(headers["Authorization"]).toBe(expected);
+
+    spy.mockRestore();
+  });
+
+  it("does not include Authorization header for anonymous access", async () => {
+    const spy = spyOn(globalThis, "fetch").mockResolvedValue(makeResponse("", 200));
+
+    await deleteMessage("https://ntfy.sh", "", "", "abc123");
+
+    const [_url, init] = spy.mock.calls[0] as [string, RequestInit];
+    const headers = (init?.headers ?? {}) as Record<string, string>;
+    expect(headers["Authorization"]).toBeUndefined();
+
+    spy.mockRestore();
+  });
+
+  it("throws on non-200 HTTP status", async () => {
+    const spy = spyOn(globalThis, "fetch").mockResolvedValue(makeResponse("Forbidden", 403));
+
+    await expect(
+      deleteMessage("https://ntfy.sh", "user", "pass", "abc123")
+    ).rejects.toThrow("403");
+
+    spy.mockRestore();
+  });
+
+  it("resolves without error on 200 OK", async () => {
+    const spy = spyOn(globalThis, "fetch").mockResolvedValue(makeResponse("", 200));
+
+    await expect(
+      deleteMessage("https://ntfy.sh", "", "", "abc123")
+    ).resolves.toBeUndefined();
+
+    spy.mockRestore();
+  });
+
+  it("strips trailing slashes from base URL before building endpoint", async () => {
+    const spy = spyOn(globalThis, "fetch").mockResolvedValue(makeResponse("", 200));
+
+    await deleteMessage("https://ntfy.sh///", "", "", "abc123");
+
+    const [url] = spy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://ntfy.sh/v1/messages/abc123");
 
     spy.mockRestore();
   });

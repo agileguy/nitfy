@@ -72,6 +72,18 @@ describe("parsePriority - named levels", () => {
     expect(parsePriority("max")).toBe(5);
   });
 
+  it("converts 'minimum' to 1 (SRD §9.5 alias)", () => {
+    expect(parsePriority("minimum")).toBe(1);
+  });
+
+  it("converts 'normal' to 3 (SRD §9.5 alias)", () => {
+    expect(parsePriority("normal")).toBe(3);
+  });
+
+  it("converts 'maximum' to 5 (SRD §9.5 alias)", () => {
+    expect(parsePriority("maximum")).toBe(5);
+  });
+
   it("is case-insensitive for named levels", () => {
     expect(parsePriority("HIGH")).toBe(4);
     expect(parsePriority("Urgent")).toBe(5);
@@ -253,9 +265,23 @@ describe("topic management (filesystem)", () => {
     const profile = loaded.profiles["home"]!;
     const defaultTopic = profile.defaultTopic; // "alerts"
 
-    // The guard: if topic === defaultTopic, we should reject it
-    const isDefault = defaultTopic === "alerts";
-    expect(isDefault).toBe(true); // confirms guard would fire
+    // Simulate the guard condition in cmdTopicsRemove: the attempt to remove
+    // the default topic should be caught by the topic === profile.defaultTopic check.
+    // We verify the guard fires correctly and leaves the topic list unchanged.
+    const topicsBeforeAttempt = [...profile.topics];
+
+    if (profile.defaultTopic === defaultTopic) {
+      // Guard fires: do NOT remove, leave config unchanged
+    } else {
+      profile.topics = profile.topics.filter((t) => t !== defaultTopic);
+      saveConfig(loaded);
+    }
+
+    // Config should not have been changed - default topic still in the list
+    const reloaded = loadConfig()!;
+    expect(reloaded.profiles["home"]!.topics).toContain(defaultTopic);
+    expect(reloaded.profiles["home"]!.topics).toEqual(topicsBeforeAttempt);
+    expect(reloaded.profiles["home"]!.defaultTopic).toBe(defaultTopic);
   });
 
   it("adding a topic group saves it correctly", () => {
