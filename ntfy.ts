@@ -360,7 +360,9 @@ async function cmdSend(profile: ServerProfile, args: string[]): Promise<void> {
   });
 
   if (!quietMode) {
-    console.log(`Sent: ${result.id} to ${topic}`);
+    // Truncate message ID to 8 chars in display; full ID is available in --json output
+    const displayId = result.id.slice(0, 8);
+    console.log(`Sent: ${displayId} to ${topic}`);
   }
 }
 
@@ -503,7 +505,7 @@ async function cmdHealth(
     const ver = result.version ? ` v${result.version}` : "";
     console.log(`Server is healthy${ver}: ${profile.url}`);
   } else {
-    console.log(`Server appears unhealthy: ${profile.url}`);
+    console.error(`Server appears unhealthy: ${profile.url}`);
     process.exit(1);
   }
 }
@@ -609,7 +611,9 @@ async function cmdDelete(profile: ServerProfile, args: string[]): Promise<void> 
     await deleteMessage(profile.url, profile.user, profile.password, messageId);
 
     if (!quietMode) {
-      console.log(`Message "${messageId}" deleted.`);
+      // Truncate message ID to 8 chars in display; full IDs are available in --json output
+      const displayId = messageId.slice(0, 8);
+      console.log(`Message "${displayId}" deleted.`);
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1251,6 +1255,13 @@ async function main(): Promise<void> {
 
 main().catch((err: unknown) => {
   const msg = err instanceof Error ? err.message : String(err);
-  console.error(`Error: ${msg}`);
+  // When --json is a global flag and an error occurs, output structured JSON to
+  // stdout so that callers using --json always get machine-parseable output.
+  // Otherwise fall back to plain text on stderr.
+  if (process.argv.includes("--json")) {
+    console.log(JSON.stringify({ error: msg }));
+  } else {
+    console.error(`Error: ${msg}`);
+  }
   process.exit(1);
 });
